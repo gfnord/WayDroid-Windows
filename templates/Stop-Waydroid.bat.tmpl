@@ -1,0 +1,11 @@
+@echo off
+title Stopping Waydroid...
+echo Stopping Waydroid UI and session...
+wsl -d __DISTRO__ -e bash -c "/opt/waydroid-launcher/waydroid-stop-user.sh"
+
+echo Stopping Waydroid container (as root)...
+wsl -d __DISTRO__ -u root -e bash -c "/opt/waydroid-launcher/waydroid-stop-root.sh"
+
+echo.
+echo Waydroid stopped.
+ping -n 3 127.0.0.1 >nul

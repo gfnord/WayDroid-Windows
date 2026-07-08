@@ -1,0 +1,12 @@
+@echo off
+title Starting Waydroid...
+echo Loading kernel modules and starting Waydroid container (as root)...
+wsl -d __DISTRO__ -u root -e bash -c "/opt/waydroid-launcher/waydroid-start-root.sh"
+
+echo.
+echo Starting nested compositor and Waydroid UI...
+wsl -d __DISTRO__ -e bash -c "/opt/waydroid-launcher/waydroid-start-user.sh"
+
+echo.
+echo Done. A "Weston Compositor" window should appear shortly showing Android.
+ping -n 5 127.0.0.1 >nul

@@ -1,0 +1,110 @@
+# Waydroid on WSL2 — Automated Installer
+
+Runs Android (Waydroid) under WSL2 Ubuntu on Windows, launchable from a
+desktop shortcut. This package rebuilds and applies every fix discovered
+while getting this working reliably — see "What this actually does" below.
+
+## Requirements
+
+- Windows 11 (or Windows 10 with WSLg backported) with a working GPU driver
+- WSL2 installed, with an Ubuntu (or other apt-based) distro already
+  installed and its first-run user setup completed
+  (`wsl --install -d Ubuntu`, then log in once)
+- Internet access (clones the WSL2 kernel source, ~1-2GB; downloads Android
+  system/vendor images via `waydroid init`, ~1GB)
+- ~15GB free disk space, a few dozen GB more headroom is safer
+- Regular PowerShell (no Administrator needed — everything either writes to
+  your user profile or elevates via `wsl -u root`, not Windows-side)
+
+## Install
+
+```powershell
+cd Waydroid-WSL-Installer
+.\Install-Waydroid.ps1
+```
+
+Optional parameters:
+
+```powershell
+.\Install-Waydroid.ps1 -DistroName Ubuntu-22.04 -InstallRoot D:\Apps\Waydroid
+```
+
+Takes **10-25 minutes**, dominated by the kernel compile. At the end it runs
+a smoke test (starts Waydroid, waits for it to report `RUNNING`, stops it
+again) and prints PASS/FAIL. Two desktop shortcuts are created:
+**Start Waydroid** and **Stop Waydroid**.
+
+First launch after install will take longer than subsequent ones — Android's
+first boot does dexopt/setup work that later boots skip.
+
+## Re-running / updating
+
+The script is idempotent: if Waydroid is already installed it skips
+`waydroid init` (won't re-download images), and `-SkipKernelBuild` skips the
+kernel stage entirely (use this if you're just fixing the launcher scripts
+after a Waydroid update and the WSL kernel version hasn't changed).
+
+## Uninstall
+
+```powershell
+.\Uninstall-Waydroid.ps1                                # shortcuts + launcher scripts only
+.\Uninstall-Waydroid.ps1 -RemoveWaydroid                 # + apt remove waydroid, delete Android images
+.\Uninstall-Waydroid.ps1 -RemoveWaydroid -RemoveKernel   # + revert to stock WSL2 kernel
+```
+
+## What this actually does (and why)
+
+WSL's stock kernel doesn't have Android binder/binderfs support, so a custom
+kernel is required. Getting Waydroid to actually *render* reliably through
+WSLg surfaced several unrelated bugs; this installer works around all of
+them:
+
+| Problem | Fix |
+|---|---|
+| Stock WSL2 kernel has no `CONFIG_ANDROID_BINDER_IPC` | Clone the exact matching `microsoft/WSL2-Linux-Kernel` tag for your running kernel version, enable binder/binderfs, rebuild |
+| `modprobe bridge iptable_nat ...` only loads the first module — the rest are silently treated as *parameters* of the first, not separate modules | Load each module in its own `modprobe` call |
+| WSLg windows render solid black (`[WARN:COPY MODE]` in the title) if `/mnt/shared_memory` isn't mounted before WSLg's compositor starts | `wsl.conf` boot hook pre-mounts it as tmpfs |
+| Windows' Start Menu auto-generates + indexes a shortcut per installed Android app, which can trigger WSLg startup *before* the shared_memory hook wins the race | Per-app `.desktop` files moved out of the scanned folder |
+| Waydroid's compositor bridge renders a stuck 1×1 buffer when talking directly to WSLg's RDP-backed compositor | Run Android inside a nested Weston window (software-rendered) instead of connecting directly |
+| Waydroid auto-freezes its Android container the instant its window loses OS focus (including mid-boot, before you've even switched away) | Patch `hardware_manager.py`'s `suspend()` to support a real "never suspend" mode, set `suspend_action = none` |
+| WSL tears down the entire VM ~60s after the last `wsl.exe` connection closes, killing everything the shortcut started, even backgrounded/detached processes | `vmIdleTimeout=-1` in `.wslconfig` |
+| `waydroid session start`'s log output is buffered when redirected to a file — a fixed "wait 8 seconds" guess before calling `show-full-ui` is unreliable | Poll the session log for the actual "is ready" line (up to 90s) with `PYTHONUNBUFFERED=1` |
+| `wsl -d X -e bash /path/script.sh` (direct exec) was less reliable at letting a `setsid`-detached background process survive than `wsl -d X -e bash -c "/path/script.sh"` | Launcher `.bat` files use the `-c` form |
+
+## Troubleshooting
+
+**Window opens but stays black / title says `[WARN:COPY MODE]`:**
+`/mnt/shared_memory` wasn't mounted before WSLg started. Run
+`wsl -d <distro> -e bash -c "mkdir -p /mnt/shared_memory && sudo mount -t tmpfs tmpfs /mnt/shared_memory"`,
+then re-run `Start-Waydroid.bat`. If it recurs often, check
+`wsl -d <distro> -e cat /etc/wsl.conf` still has the boot `command=` line.
+
+**Window opens, stays blank/gray, Android never appears:**
+Android is probably still booting (can take 60-90s, longer on first launch).
+Check `wsl -d <distro> -e waydroid status` — if `Container: FROZEN`, the
+suspend patch didn't take; re-run the installer or manually
+`wsl -d <distro> -u root -e lxc-unfreeze -P /var/lib/waydroid/lxc -n waydroid`.
+
+**Nothing happens / window never opens at all:**
+Check `wsl -l -v` — if the distro shows `Stopped` right after running the
+shortcut, `vmIdleTimeout=-1` didn't take effect (needs `wsl --shutdown` after
+editing `.wslconfig`, which the installer does — if you edited `.wslconfig`
+by hand afterward, redo that).
+
+**`waydroid init` or the kernel clone hangs / fails:** network/proxy issue —
+both need outbound HTTPS to github.com and sourceforge.net.
+
+## Package contents
+
+```
+Install-Waydroid.ps1        Main installer (run this)
+Uninstall-Waydroid.ps1       Reverses it
+templates/
+  waydroid-start-root.sh     Loads kernel modules, starts container (root)
+  waydroid-start-user.sh     Nested Weston + session start + show-full-ui
+  waydroid-stop-root.sh      Stops container (root)
+  waydroid-stop-user.sh      Stops session + nested Weston
+  Start-Waydroid.bat.tmpl    Windows shortcut target (__DISTRO__ substituted)
+  Stop-Waydroid.bat.tmpl
+  patch_hardware_manager.py  Disables Waydroid's auto-suspend-on-blur
+```
