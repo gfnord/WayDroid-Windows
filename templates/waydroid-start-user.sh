@@ -15,6 +15,35 @@ if ! command -v weston >/dev/null 2>&1; then
   exit 1
 fi
 
+session_running() {
+  waydroid status 2>/dev/null | grep -qE '^Session:[[:space:]]*RUNNING'
+}
+weston_running() {
+  pgrep -f 'weston --backend=wayland-backend' >/dev/null 2>&1
+}
+
+# Clicking Start while Waydroid is already up used to pkill weston out from
+# under the running session. The session itself survives, but its compositor
+# connection is gone and `waydroid session start` then refuses with "Session
+# is already running", so nothing ever reattaches: you get an empty Weston
+# window, no Android UI, and no way out but a full stop. Handle both states
+# explicitly instead.
+if session_running && weston_running; then
+  echo "Waydroid is already running; re-showing the UI."
+  export WAYLAND_DISPLAY=wayland-1
+  setsid nohup waydroid show-full-ui > /tmp/waydroid-ui.log 2>&1 < /dev/null &
+  disown
+  exit 0
+fi
+
+# A session whose compositor died cannot be reattached, so tear it down before
+# starting a fresh one.
+if session_running; then
+  echo "Stopping a session left without a compositor before restarting."
+  waydroid session stop >/dev/null 2>&1 || true
+  sleep 2
+fi
+
 export WAYLAND_DISPLAY=wayland-0
 pkill -f 'weston --backend=wayland-backend' 2>/dev/null
 sleep 1
