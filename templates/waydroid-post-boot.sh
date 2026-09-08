@@ -1,77 +1,88 @@
 #!/bin/bash
-# Post-boot repairs applied once Android is up. Two independent problems:
-#   1. system_server crashes whenever it tries to show an app-error dialog
-#   2. Android never installs a default route
+# Repairs and display tuning applied once Android is up. Run as root from
+# Start-Waydroid.bat: "waydroid shell" refuses to run as a normal user.
 #
-#
-# Android's netd never brings the ethernet network up on its own here: its BPF
-# and xt_quota setup fails against the WSL kernel (logcat shows "Unable to swap
-# active stats map: Address family not supported by protocol" and a missing
-# /proc/net/xt_quota/globalAlert), so EthernetService's handler jams with
-# queued NetworkOffer callbacks and no NetworkAgent ever connects. DHCP still
-# hands out a lease, so Android has an address and a route to its own subnet
-# but no gateway -- it looks connected and nothing reaches the internet.
-#
-# Note this must go through `ndc` (netd) rather than `ip route add`. Android
-# uses fwmark policy routing: app traffic is resolved in netd's per-network
-# table (`eth0`), not `main`, and netd reconciles `main` and deletes routes it
-# does not own -- so a plain `ip route add` both targets the wrong table and
-# gets reverted within a minute. Routes added through netd stick, and app DNS
-# starts working because the resolver is bound to the same network.
-#
-# Host-side NAT (waydroid0 bridge + MASQUERADE) is already correct.
+# Everything here is idempotent, so the launcher can run it on every start.
 set -u
 
-# 1. Suppress ActivityManager's crash/ANR dialogs.
-#
-# Adding one of those windows fails in this compositor setup, and the failure
-# is thrown on system_server's android.ui thread, which kills system_server
-# outright:
-#
-#     FATAL EXCEPTION IN SYSTEM PROCESS: android.ui
-#     java.lang.RuntimeException: Adding window failed
-#       at android.view.ViewRootImpl.setView(ViewRootImpl.java:1316)
-#       at android.app.Dialog.show(Dialog.java:352)
-#       at com.android.server.am.ErrorDialogController...
-#
-# So any app crash takes the whole framework down, and every restart tears the
-# network down with it -- which looks like flaky internet rather than a crash
-# loop. Suppressing the dialogs removes the code path. The setting lives in
-# /data and persists; setting it again is harmless.
-waydroid shell -- settings put global hide_error_dialogs 1 >/dev/null 2>&1
-
-# 2. Default route.
-GW=$(ip -4 -br addr show waydroid0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
-SUBNET=$(ip -4 -o route show dev waydroid0 proto kernel 2>/dev/null | awk '{print $1}' | head -1)
-if [ -z "$GW" ] || [ -z "$SUBNET" ]; then
-  echo "waydroid0 bridge not configured; skipping Android network fix." >&2
+# Android takes a while to answer; nothing below works until it does.
+for _ in $(seq 1 45); do
+  waydroid shell -- true >/dev/null 2>&1 && break
+  sleep 2
+done
+if ! waydroid shell -- true >/dev/null 2>&1; then
+  echo "Android is not responding; skipping post-boot fixes." >&2
   exit 0
 fi
 
-for i in $(seq 1 30); do
-  if waydroid shell -- ip route show table eth0 2>/dev/null | grep -q '^default'; then
-    exit 0                                  # already routed, nothing to do
-  fi
+# --- 1. Stop app crashes from killing the framework -------------------------
+#
+# Adding an app-error dialog window fails in this compositor setup, and the
+# exception lands on system_server's android.ui thread, which kills it:
+#
+#     FATAL EXCEPTION IN SYSTEM PROCESS: android.ui
+#     java.lang.RuntimeException: Adding window failed
+#       at android.app.Dialog.show(Dialog.java:352)
+#       at com.android.server.am.ErrorDialogController...
+#
+# So any app crash restarts the whole framework and takes the network with it,
+# which looks like flaky internet rather than a crash loop.
+if [ "$(waydroid shell -- settings get global hide_error_dialogs 2>/dev/null | tr -d '\r')" != "1" ]; then
+  waydroid shell -- settings put global hide_error_dialogs 1 >/dev/null 2>&1 \
+    && echo "Disabled app-error dialogs (they crash system_server here)."
+fi
 
-  # netd's id for the ethernet network, taken from its own routing rules
-  # (fwmark 0x1<netid>/0x1ffff) rather than assuming the usual 100.
+# --- 2. Default route -------------------------------------------------------
+#
+# netd's BPF/xt_quota setup fails on the WSL kernel, so EthernetService blocks
+# in awaitIpClientStart() and never finishes bringing the link up. DHCP still
+# leases an address, so Android looks connected but has no gateway.
+#
+# This must go through ndc: Android resolves app traffic in netd's per-network
+# table, not "main", and netd deletes routes in "main" that it does not own --
+# so "ip route add" both targets the wrong table and gets reverted.
+if ! waydroid shell -- ip route show table eth0 2>/dev/null | grep -q '^default'; then
+  GW=$(ip -4 -br addr show waydroid0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
+  SUBNET=$(ip -4 -o route show dev waydroid0 proto kernel 2>/dev/null | awk '{print $1}' | head -1)
   MARK=$(waydroid shell -- ip rule list 2>/dev/null \
            | grep -o 'fwmark 0x[0-9a-f]*/0x1ffff' | head -1 \
            | sed 's|.*fwmark 0x\([0-9a-f]*\)/.*|\1|')
-  if [ -n "$MARK" ]; then
+  if [ -n "$GW" ] && [ -n "$SUBNET" ] && [ -n "$MARK" ]; then
     NETID=$(( 0x$MARK & 0xffff ))
     # Connected subnet first: netd rejects the gateway route as "Network is
     # unreachable" until the table can reach the gateway itself.
-    waydroid shell -- ndc network route add "$NETID" eth0 "$SUBNET"        >/dev/null 2>&1
-    waydroid shell -- ndc network route add "$NETID" eth0 0.0.0.0/0 "$GW"  >/dev/null 2>&1
-    waydroid shell -- ndc network default set "$NETID"                     >/dev/null 2>&1
+    waydroid shell -- ndc network route add "$NETID" eth0 "$SUBNET"       >/dev/null 2>&1
+    waydroid shell -- ndc network route add "$NETID" eth0 0.0.0.0/0 "$GW" >/dev/null 2>&1
+    waydroid shell -- ndc network default set "$NETID"                    >/dev/null 2>&1
     if waydroid shell -- ip route show table eth0 2>/dev/null | grep -q '^default'; then
       echo "Android network configured: default via $GW on netd network $NETID."
-      exit 0
+    else
+      echo "Could not configure Android's default route; no internet inside Android." >&2
     fi
   fi
-  sleep 2                                   # Android may still be coming up
-done
+fi
 
-echo "Could not configure Android's default route; there will be no internet inside Android." >&2
+# --- 3. Phone-shaped layouts ------------------------------------------------
+#
+# Android picks phone vs tablet UI from the display width in dp
+# (px / density * 160). At the image's stock density a 720px-wide screen
+# reports ~640dp, which is tablet territory. Derive a density that lands near
+# a phone's 360dp, so changing WIDTH/HEIGHT in waydroid-start-user.sh does not
+# also require hand-tuning a density here.
+#
+# Note "wm density" reports a manual setting as a second "Override density"
+# line and leaves "Physical density" at the panel's own value, so the current
+# value has to be read from the override when one is present.
+PX=$(waydroid shell -- wm size 2>/dev/null | sed -n 's/.*Physical size: \([0-9]*\)x.*/\1/p' | head -1)
+if [ -n "$PX" ] && [ "$PX" -gt 0 ] 2>/dev/null; then
+  WANT=$(( PX * 160 / 360 ))
+  DENS=$(waydroid shell -- wm density 2>/dev/null | tr -d '\r')
+  CUR=$(printf '%s\n' "$DENS" | sed -n 's/.*Override density: \([0-9]*\).*/\1/p' | head -1)
+  [ -z "$CUR" ] && CUR=$(printf '%s\n' "$DENS" | sed -n 's/.*Physical density: \([0-9]*\).*/\1/p' | head -1)
+  if [ "$CUR" != "$WANT" ]; then
+    waydroid shell -- wm density "$WANT" >/dev/null 2>&1 \
+      && echo "Set display density to $WANT so a ${PX}px screen reports ~360dp (phone layout)."
+  fi
+fi
+
 exit 0

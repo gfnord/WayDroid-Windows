@@ -44,10 +44,21 @@ if session_running; then
   sleep 2
 fi
 
+# Size of the nested compositor window, and therefore of Android's display.
+# Portrait, phone-shaped by default. Android picks phone vs tablet layouts from
+# the width in dp (px / density * 160), so waydroid-post-boot.sh sets the
+# density to keep this near a phone's ~360dp -- change WIDTH/HEIGHT here and
+# the layout follows automatically.
+#
+# Resizing the window afterwards makes Waydroid restart the session, so the
+# size is fixed at launch rather than adjusted live.
+WIDTH=720
+HEIGHT=1280
+
 export WAYLAND_DISPLAY=wayland-0
 pkill -f 'weston --backend=wayland-backend' 2>/dev/null
 sleep 1
-setsid nohup weston --backend=wayland-backend.so --width=1280 --height=800 > /tmp/nested-weston.log 2>&1 < /dev/null &
+setsid nohup weston --backend=wayland-backend.so --width="$WIDTH" --height="$HEIGHT" > /tmp/nested-weston.log 2>&1 < /dev/null &
 disown
 sleep 3
 
