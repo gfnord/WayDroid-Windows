@@ -6,6 +6,12 @@ wsl -d __DISTRO__ -u root -e bash -c "/opt/waydroid-launcher/waydroid-start-root
 echo.
 echo Starting nested compositor and Waydroid UI...
 wsl -d __DISTRO__ -e bash -c "/opt/waydroid-launcher/waydroid-start-user.sh"
+if errorlevel 1 (
+  echo.
+  echo Waydroid failed to start. See the message above.
+  pause
+  exit /b 1
+)
 
 echo.
 echo Done. A "Weston Compositor" window should appear shortly showing Android.

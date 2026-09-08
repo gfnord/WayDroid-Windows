@@ -5,6 +5,16 @@
 # actually reports ready (not a fixed guess -- boot time varies).
 set -u
 
+# Everything below is backgrounded with setsid/nohup, so a missing weston
+# produces no visible error and the script still exits 0 -- the window just
+# never appears. Check up front instead.
+if ! command -v weston >/dev/null 2>&1; then
+  echo "ERROR: weston is not installed." >&2
+  echo "Android runs inside a nested Weston compositor; without it the session" >&2
+  echo "cannot start. Install it with:  sudo apt-get install -y weston" >&2
+  exit 1
+fi
+
 export WAYLAND_DISPLAY=wayland-0
 pkill -f 'weston --backend=wayland-backend' 2>/dev/null
 sleep 1

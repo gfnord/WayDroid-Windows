@@ -279,6 +279,22 @@ if ($waydroidInstalled -match "OK") {
         "apt-get update -y && apt-get install -y waydroid")
 }
 
+# Separate from the waydroid install above on purpose: that block is skipped
+# entirely when waydroid is already present, which would silently leave weston
+# missing on an upgrade or a re-run. The launcher hard-depends on it.
+Write-Step "Installing Weston (nested compositor the launcher runs Android inside)"
+$westonInstalled = & wsl -d $DistroName -e bash -c "command -v weston >/dev/null && echo OK"
+if ($westonInstalled -match "OK") {
+    Write-Info "Weston already installed."
+} else {
+    Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c",
+        "apt-get update -y && apt-get install -y weston")
+}
+$westonCheck = & wsl -d $DistroName -e bash -c "command -v weston >/dev/null && echo OK"
+if ($westonCheck -notmatch "OK") {
+    throw "weston is required by the launcher (it runs Android inside a nested compositor) but is not installed and could not be installed automatically. Install it manually: wsl -d $DistroName -u root -e apt-get install -y weston"
+}
+
 $waydroidInited = & wsl -d $DistroName -e bash -c "test -f /var/lib/waydroid/waydroid.cfg && echo OK"
 if ($waydroidInited -match "OK") {
     Write-Info "Waydroid already initialized (/var/lib/waydroid/waydroid.cfg exists)."
