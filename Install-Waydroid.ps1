@@ -330,7 +330,7 @@ Write-Step "Installing launcher scripts into WSL (/opt/waydroid-launcher)"
 # install location can't be found by both. /opt is readable+executable by
 # everyone regardless of which user invokes it.
 Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c", "mkdir -p /opt/waydroid-launcher && chmod 755 /opt/waydroid-launcher")
-foreach ($f in @("waydroid-start-root.sh","waydroid-start-user.sh","waydroid-stop-root.sh","waydroid-stop-user.sh","waydroid-fix-network.sh")) {
+foreach ($f in @("waydroid-start-root.sh","waydroid-start-user.sh","waydroid-stop-root.sh","waydroid-stop-user.sh","waydroid-post-boot.sh")) {
     $srcWin = Join-Path $TemplatesDir $f
     $srcWsl = ConvertTo-WslPath $srcWin
     Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c",

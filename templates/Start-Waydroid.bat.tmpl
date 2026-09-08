@@ -14,8 +14,8 @@ if errorlevel 1 (
 )
 
 echo.
-echo Restoring Android network route...
-wsl -d __DISTRO__ -u root -e bash -c "/opt/waydroid-launcher/waydroid-fix-network.sh"
+echo Applying post-boot fixes...
+wsl -d __DISTRO__ -u root -e bash -c "/opt/waydroid-launcher/waydroid-post-boot.sh"
 
 echo.
 echo Done. A "Weston Compositor" window should appear shortly showing Android.

@@ -1,5 +1,8 @@
 #!/bin/bash
-# Gives Android a working default route and DNS.
+# Post-boot repairs applied once Android is up. Two independent problems:
+#   1. system_server crashes whenever it tries to show an app-error dialog
+#   2. Android never installs a default route
+#
 #
 # Android's netd never brings the ethernet network up on its own here: its BPF
 # and xt_quota setup fails against the WSL kernel (logcat shows "Unable to swap
@@ -19,6 +22,25 @@
 # Host-side NAT (waydroid0 bridge + MASQUERADE) is already correct.
 set -u
 
+# 1. Suppress ActivityManager's crash/ANR dialogs.
+#
+# Adding one of those windows fails in this compositor setup, and the failure
+# is thrown on system_server's android.ui thread, which kills system_server
+# outright:
+#
+#     FATAL EXCEPTION IN SYSTEM PROCESS: android.ui
+#     java.lang.RuntimeException: Adding window failed
+#       at android.view.ViewRootImpl.setView(ViewRootImpl.java:1316)
+#       at android.app.Dialog.show(Dialog.java:352)
+#       at com.android.server.am.ErrorDialogController...
+#
+# So any app crash takes the whole framework down, and every restart tears the
+# network down with it -- which looks like flaky internet rather than a crash
+# loop. Suppressing the dialogs removes the code path. The setting lives in
+# /data and persists; setting it again is harmless.
+waydroid shell -- settings put global hide_error_dialogs 1 >/dev/null 2>&1
+
+# 2. Default route.
 GW=$(ip -4 -br addr show waydroid0 2>/dev/null | awk '{print $3}' | cut -d/ -f1)
 SUBNET=$(ip -4 -o route show dev waydroid0 proto kernel 2>/dev/null | awk '{print $1}' | head -1)
 if [ -z "$GW" ] || [ -z "$SUBNET" ]; then
