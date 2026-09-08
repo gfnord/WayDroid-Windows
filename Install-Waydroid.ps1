@@ -313,10 +313,6 @@ Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c",
 Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c",
     "test -f /var/lib/waydroid/waydroid.cfg && sed -i 's/^suspend_action = .*/suspend_action = none/' /var/lib/waydroid/waydroid.cfg || true")
 
-Write-Step "Moving per-app Waydroid .desktop shortcuts aside (avoids a Windows Start Menu icon-indexing race)"
-Invoke-Wsl @("-d", $DistroName, "-e", "bash", "-c",
-    "mkdir -p ~/.local/share/applications-disabled && mv ~/.local/share/applications/waydroid.*.desktop ~/.local/share/applications-disabled/ 2>/dev/null; true")
-
 # ---------------------------------------------------------------------------
 Write-Step "Installing launcher scripts into WSL (/opt/waydroid-launcher)"
 # Fixed, user-independent path: Start-Waydroid.bat invokes the root scripts
@@ -395,6 +391,20 @@ if (-not $SkipSmokeTest) {
     & (Join-Path $InstallRoot "Stop-Waydroid.bat") | Out-Null
 } else {
     Write-Step "Skipping smoke test (-SkipSmokeTest)"
+}
+
+# ---------------------------------------------------------------------------
+# Deliberately last. Waydroid generates these per-app .desktop files when a
+# session first starts, so running this before the smoke test (as this script
+# used to) matched nothing and left every Android app in the Start Menu --
+# exactly the icon-indexing race the step exists to avoid.
+Write-Step "Moving per-app Waydroid .desktop shortcuts aside (avoids a Windows Start Menu icon-indexing race)"
+Invoke-Wsl @("-d", $DistroName, "-e", "bash", "-c",
+    "mkdir -p ~/.local/share/applications-disabled && mv ~/.local/share/applications/waydroid.*.desktop ~/.local/share/applications-disabled/ 2>/dev/null; true")
+$disabledCount = (& wsl -d $DistroName -e bash -c "ls ~/.local/share/applications-disabled/waydroid.*.desktop 2>/dev/null | wc -l").Trim()
+Write-Info "$disabledCount per-app shortcut(s) moved aside."
+if ($SkipSmokeTest -and $disabledCount -eq "0") {
+    Write-Warn2 "No session has run yet (-SkipSmokeTest), so the per-app shortcuts do not exist to move. If Android app icons appear in your Start Menu after the first launch, re-run this installer or move them manually."
 }
 
 # ---------------------------------------------------------------------------
