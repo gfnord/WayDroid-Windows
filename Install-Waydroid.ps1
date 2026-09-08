@@ -154,14 +154,18 @@ if (-not $SkipKernelBuild) {
         "mkdir -p ~/src && cd ~/src && rm -rf wsl-kernel && git clone --depth 1 --branch $exactTag https://github.com/microsoft/WSL2-Linux-Kernel.git wsl-kernel")
 
     Write-Step "Configuring kernel (enabling CONFIG_ANDROID_BINDER_IPC / CONFIG_ANDROID_BINDERFS)"
-    Invoke-Wsl @("-d", $DistroName, "-e", "bash", "-c",
-        "cd ~/src/wsl-kernel && zcat /proc/config.gz > .config && " +
-        "./scripts/config --set-val CONFIG_ANDROID_BINDER_IPC y " +
-        "--set-val CONFIG_ANDROID_BINDERFS y " +
-        "--set-str CONFIG_ANDROID_BINDER_DEVICES 'binder,hwbinder,vndbinder' " +
-        "--set-val CONFIG_ANDROID_BINDER_IPC_RUST n " +
-        "--set-val CONFIG_ANDROID_BINDER_ALLOC_KUNIT_TEST n && " +
-        "yes '' | make olddefconfig")
+    # NOTE: build the command string in a variable first. Inside an @(...)
+    # array literal a newline separates elements, so a trailing "+" does NOT
+    # continue the expression -- each fragment becomes its own argv entry and
+    # bash -c only receives the first one.
+    $configCmd = "cd ~/src/wsl-kernel && zcat /proc/config.gz > .config && " `
+        + "./scripts/config --set-val CONFIG_ANDROID_BINDER_IPC y " `
+        + "--set-val CONFIG_ANDROID_BINDERFS y " `
+        + "--set-str CONFIG_ANDROID_BINDER_DEVICES 'binder,hwbinder,vndbinder' " `
+        + "--set-val CONFIG_ANDROID_BINDER_IPC_RUST n " `
+        + "--set-val CONFIG_ANDROID_BINDER_ALLOC_KUNIT_TEST n && " `
+        + "yes '' | make olddefconfig"
+    Invoke-Wsl @("-d", $DistroName, "-e", "bash", "-c", $configCmd)
 
     Write-Step "Building kernel + modules (10-20 min depending on CPU)"
     Invoke-Wsl @("-d", $DistroName, "-e", "bash", "-c",
