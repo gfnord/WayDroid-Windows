@@ -14,5 +14,9 @@ if errorlevel 1 (
 )
 
 echo.
+echo Restoring Android network route...
+wsl -d __DISTRO__ -u root -e bash -c "/opt/waydroid-launcher/waydroid-fix-network.sh"
+
+echo.
 echo Done. A "Weston Compositor" window should appear shortly showing Android.
 ping -n 5 127.0.0.1 >nul
