@@ -8,14 +8,15 @@
   -- stock WSL2 kernels don't have it), installs Waydroid, and applies every
   fix needed for headless/scripted launch to work reliably:
     - modprobe called per-module (multi-arg form silently breaks networking)
-    - /mnt/shared_memory pre-mounted at boot (fixes WSLg "[WARN:COPY MODE]"
-      black-window bug)
+    - any /mnt/shared_memory tmpfs REMOVED (mounting one there breaks WSLg's
+      buffer sharing and forces "[WARN:COPY MODE]", which renders every
+      window solid black)
     - vmIdleTimeout=-1 (WSL tears down the whole VM ~60s after the last
       wsl.exe connection closes otherwise, killing the session mid-boot)
     - Waydroid's auto-suspend-on-blur patched off (it freezes the container
       the instant its window loses focus, including mid-boot)
-    - per-app Waydroid .desktop shortcuts moved aside (Windows Start Menu
-      icon indexing races WSLg startup against the shared_memory fix)
+    - per-app Waydroid .desktop shortcuts moved aside (keeps a dozen Android
+      app icons out of the Windows Start Menu)
     - launcher scripts wait for Android's actual "ready" signal before
       showing the UI, instead of a fixed guess
 
@@ -227,7 +228,7 @@ if (-not $SkipKernelBuild) {
     Write-Info "Wrote $wslConfigPath"
 
     # ------------------------------------------------------------------
-    Write-Step "Configuring /etc/wsl.conf (systemd + shared_memory boot fix)"
+    Write-Step "Configuring /etc/wsl.conf (systemd; removing any shared_memory tmpfs hook)"
     $wslConfBackupCmd = "test -f /etc/wsl.conf && cp /etc/wsl.conf /etc/wsl.conf.bak-`$(date +%Y%m%d-%H%M%S) || true"
     Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c", $wslConfBackupCmd)
 
@@ -241,7 +242,15 @@ if os.path.exists(path):
 if not cp.has_section("boot"):
     cp.add_section("boot")
 cp.set("boot", "systemd", "true")
-cp.set("boot", "command", "mkdir -p /mnt/shared_memory && mount -t tmpfs tmpfs /mnt/shared_memory")
+# Earlier versions of this installer mounted a tmpfs at /mnt/shared_memory
+# here, believing it fixed WSLg's black-window bug. It does the opposite:
+# the tmpfs shadows the shared-memory transport WSLg uses to hand buffers to
+# the Windows RDP client, so WSLg falls back to "[WARN:COPY MODE]" and every
+# window renders solid black. Strip the hook if a previous run installed it.
+old = cp.get("boot", "command", fallback="")
+if "shared_memory" in old:
+    cp.remove_option("boot", "command")
+    print("removed stale shared_memory boot hook")
 with open(path, "w") as f:
     cp.write(f)
 print("wrote /etc/wsl.conf")

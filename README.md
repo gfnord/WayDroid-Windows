@@ -63,8 +63,8 @@ them:
 |---|---|
 | Stock WSL2 kernel has no `CONFIG_ANDROID_BINDER_IPC` | Clone the exact matching `microsoft/WSL2-Linux-Kernel` tag for your running kernel version, enable binder/binderfs, rebuild |
 | `modprobe bridge iptable_nat ...` only loads the first module — the rest are silently treated as *parameters* of the first, not separate modules | Load each module in its own `modprobe` call |
-| WSLg windows render solid black (`[WARN:COPY MODE]` in the title) if `/mnt/shared_memory` isn't mounted before WSLg's compositor starts | `wsl.conf` boot hook pre-mounts it as tmpfs |
-| Windows' Start Menu auto-generates + indexes a shortcut per installed Android app, which can trigger WSLg startup *before* the shared_memory hook wins the race | Per-app `.desktop` files moved out of the scanned folder |
+| WSLg windows render solid black with `[WARN:COPY MODE]` in the title if a tmpfs is mounted at `/mnt/shared_memory` — it shadows the shared-memory transport WSLg uses to hand buffers to the Windows RDP client | Do **not** mount anything there; the installer removes the hook earlier versions added |
+| Windows' Start Menu auto-generates + indexes a shortcut per installed Android app, cluttering it with a dozen entries | Per-app `.desktop` files moved out of the scanned folder |
 | Waydroid's compositor bridge renders a stuck 1×1 buffer when talking directly to WSLg's RDP-backed compositor | Run Android inside a nested Weston window (software-rendered) instead of connecting directly |
 | Waydroid auto-freezes its Android container the instant its window loses OS focus (including mid-boot, before you've even switched away) | Patch `hardware_manager.py`'s `suspend()` to support a real "never suspend" mode, set `suspend_action = none` |
 | WSL tears down the entire VM ~60s after the last `wsl.exe` connection closes, killing everything the shortcut started, even backgrounded/detached processes | `vmIdleTimeout=-1` in `.wslconfig` |
@@ -74,10 +74,13 @@ them:
 ## Troubleshooting
 
 **Window opens but stays black / title says `[WARN:COPY MODE]`:**
-`/mnt/shared_memory` wasn't mounted before WSLg started. Run
-`wsl -d <distro> -e bash -c "mkdir -p /mnt/shared_memory && sudo mount -t tmpfs tmpfs /mnt/shared_memory"`,
-then re-run `Start-Waydroid.bat`. If it recurs often, check
-`wsl -d <distro> -e cat /etc/wsl.conf` still has the boot `command=` line.
+Something has mounted a tmpfs at `/mnt/shared_memory`, which breaks WSLg's
+buffer sharing and makes *every* WSLg window render black — not just Waydroid.
+Confirm with a plain GUI app (`wsl -d <distro> -e weston-terminal`); if that is
+black too, the problem is WSLg, not Waydroid. Remove the mount and any
+`command=` line in `/etc/wsl.conf` that creates it, then `wsl --shutdown` and
+start again. A full shutdown is required — `wsl -t <distro>` restarts only that
+distro and leaves the WSLg system distro running with the broken state.
 
 **Window opens, stays blank/gray, Android never appears:**
 Android is probably still booting (can take 60-90s, longer on first launch).
