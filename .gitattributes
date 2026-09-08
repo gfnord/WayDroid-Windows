@@ -1,0 +1,10 @@
+# Payloads that run inside WSL must have LF endings. With CRLF, bash reads
+# the CR as part of the token: shebangs fail with "cannot execute: required
+# file not found" (exit 127) and heredoc terminators never match.
+*.sh   text eol=lf
+*.py   text eol=lf
+
+# Windows-side files stay CRLF.
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.tmpl text eol=crlf

@@ -67,6 +67,13 @@ function Write-Warn2($msg) { Write-Host "!!  $msg" -ForegroundColor Yellow }
 
 function Invoke-Wsl {
     param([string[]]$WslArgs, [switch]$AllowFail)
+    # This .ps1 is CRLF on Windows, so any multi-line string literal (e.g. a
+    # here-string holding a bash script) carries CR characters. bash treats CR
+    # as part of the token: a heredoc opened with << "EOF" looks for a line
+    # equal to "EOF<CR>" and never finds it, failing with
+    #   warning: here-document delimited by end-of-file (wanted `EOF)
+    # Strip CR so the payload is what a Linux shell expects.
+    $WslArgs = @($WslArgs | ForEach-Object { $_ -replace "`r`n", "`n" -replace "`r", "" })
     Write-Info "wsl $($WslArgs -join ' ')"
     $out = & wsl @WslArgs 2>&1
     $code = $LASTEXITCODE
@@ -306,7 +313,7 @@ foreach ($f in @("waydroid-start-root.sh","waydroid-start-user.sh","waydroid-sto
     $srcWin = Join-Path $TemplatesDir $f
     $srcWsl = ConvertTo-WslPath $srcWin
     Invoke-Wsl @("-d", $DistroName, "-u", "root", "-e", "bash", "-c",
-        "cp '$srcWsl' /opt/waydroid-launcher/$f && chmod 755 /opt/waydroid-launcher/$f")
+        "tr -d '\r' < '$srcWsl' > /opt/waydroid-launcher/$f && chmod 755 /opt/waydroid-launcher/$f")
 }
 Write-Info "Launcher scripts installed."
 
